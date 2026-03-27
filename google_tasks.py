@@ -121,7 +121,7 @@ def sync_assignments(service, assignments, tasklist_id):
         elif not completed:
             task = {
                 "title": f"({assignment['course_code']}) {assignment['name']}",
-                "notes": f"{assignment['url']}\ncanvas-id:{assignment['assignment_id']}-{assignment['course_id']}"
+                "notes": f"{assignment['url']}\ncanvas-id:{canvas_id_dict_key}"
             }
 
             if assignment['due_at']:
