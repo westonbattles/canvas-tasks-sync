@@ -1,0 +1,30 @@
+name: Sync Canvas to Google Tasks
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch: # allows manual trigger from GitHub UI
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write secrets to files
+        run: |
+          echo '${{ secrets.GOOGLE_TOKEN }}' > token.json
+        env:
+          CANVAS_AUTH_KEY: ${{ secrets.CANVAS_AUTH_KEY }}
+
+      - name: Run sync
+        run: python main.py
+        env:
+          CANVAS_AUTH_KEY: ${{ secrets.CANVAS_AUTH_KEY }}

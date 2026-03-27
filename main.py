@@ -2,7 +2,6 @@ from datetime import datetime
 import canvas
 import google_tasks
 from googleapiclient.errors import HttpError
-import json
 
 # Name for task list to be added into
 TASKS_LIST_NAME = "School"
