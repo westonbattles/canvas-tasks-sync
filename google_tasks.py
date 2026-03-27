@@ -73,11 +73,8 @@ def sync_assignments(service, assignments, tasklist_id):
 
         # canvas id was found
         if parts[1]:
-            try:
-                canvas_id = int(parts[-1])
-                tasks[canvas_id] = task
-            except ValueError:
-                continue
+            canvas_id = parts[-1]
+            tasks[canvas_id] = task
 
         # canvas id not found... skip the task so we dont mess with it
         else:
@@ -98,30 +95,32 @@ def sync_assignments(service, assignments, tasklist_id):
     # the earliest due dates to appear first
     for assignment in reversed(assignments):
 
+        # skip quizzes for now
+        if assignment.get('type','') == 'quiz': continue
+
         completed = assignment['has_submitted']
 
         # if the assignment id is a key in tasks
-        if assignment.get('id', '') in tasks:
+        if assignment.get('assignment_id', '') in tasks:
             # patches
+            canvas_id_dict_key = f"{assignment['course-id']}-{assignment['assignment_id']}"
+            body = {"id": tasks[canvas_id_dict_key]['id']}
+
             if completed:
-                body = {
-                    "id": tasks[assignment['id']]['id'],
-                    "status": "completed"
-                }
-                service.tasks().patch(tasklist=tasklist_id, task=tasks[assignment['id']]['id'], body=body).execute()
-            elif tasks[assignment['id']].get('due') != to_tasks_date(assignment['due_at']):
-                body = {
-                    "id": tasks[assignment['id']]['id'],
-                    "due": to_tasks_date(assignment['due_at'])
-                }
-                service.tasks().patch(tasklist=tasklist_id, task=tasks[assignment['id']]['id'], body=body).execute()
+                body['status'] = "completed"
+            # if the due dates are misaligned, update the task due date
+            elif tasks[canvas_id_dict_key].get('due') != to_tasks_date(assignment['due_at']):
+                body['due'] = to_tasks_date(assignment['due_at'])
+            else: continue # no update needs to happen so go to the next assignment
+
+            service.tasks().patch(tasklist=tasklist_id, task=tasks[canvas_id_dict_key]['id'], body=body).execute()
 
 
         # assignment not already a task, create one if it's not already completed
         elif not completed:
             task = {
                 "title": f"({assignment['course_code']}) {assignment['name']}",
-                "notes": f"{assignment['url']}\ncanvas-id:{assignment['id']}"
+                "notes": f"{assignment['url']}\ncanvas-id:{assignment['assignment_id']}-{assignment['course_id']}"
             }
 
             if assignment['due_at']:
