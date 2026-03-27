@@ -3,6 +3,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from pprint import pprint
 
 SCOPES = ["https://www.googleapis.com/auth/tasks"]
 
@@ -63,7 +64,7 @@ def sync_assignments(service, assignments, tasklist_id):
     tasks = {}
 
     # Build tasks dictionary (from tasks that already exists in google tasks)
-    results = service.tasks().list(tasklist=tasklist_id).execute()
+    results = service.tasks().list(tasklist=tasklist_id, maxResults=100).execute()
     task_items = results.get("items", [])
     for task in task_items:
         # snipe the canvas id from the description of our task (all automatically
