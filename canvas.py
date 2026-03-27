@@ -3,7 +3,7 @@ import requests
 import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from pprint import pprint
+
 
 PST = ZoneInfo("America/Los_Angeles")
 from dotenv import load_dotenv
@@ -49,7 +49,6 @@ def get_assignments(course_id, course_code) -> list:
 
         # add the dict
         assignments.append(assignment_dict)
-        pprint(assignment_dict)
 
     return assignments
 
@@ -81,7 +80,7 @@ def get_planner_items(course_ids) -> list:
         planner_item_dict['url'] = url + planner_item['html_url']
 
         submissions = planner_item.get('submissions') or {}
-        planner_item_dict['has_submitted'] = submissions.get('submitted', False)
+        planner_item_dict['has_submitted'] = submissions.get('submitted', None)
         
         due_at_str = planner_item['plannable'].get('due_at') or planner_item.get('plannable_date')
         planner_item_dict['due_at'] = get_canvas_due_date(due_at_str, planner_item_dict['name'])

@@ -3,7 +3,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
-from pprint import pprint
+
 
 SCOPES = ["https://www.googleapis.com/auth/tasks"]
 
@@ -64,7 +64,7 @@ def sync_assignments(service, assignments, tasklist_id):
     tasks = {}
 
     # Build tasks dictionary (from tasks that already exists in google tasks)
-    results = service.tasks().list(tasklist=tasklist_id, maxResults=100).execute()
+    results = service.tasks().list(tasklist=tasklist_id, maxResults=100, showCompleted=True, showHidden=True).execute()
     task_items = results.get("items", [])
     for task in task_items:
         # snipe the canvas id from the description of our task (all automatically
@@ -94,6 +94,8 @@ def sync_assignments(service, assignments, tasklist_id):
     #
     # reversed(assignments) because tasks lists are a stack and we want
     # the earliest due dates to appear first
+
+
     for assignment in reversed(assignments):
 
         # skip quizzes for now
@@ -107,8 +109,8 @@ def sync_assignments(service, assignments, tasklist_id):
         if canvas_id_dict_key in tasks:
             # patches
             body = {"id": tasks[canvas_id_dict_key]['id']}
-
-            if completed:
+            # if canvas assignment is completed and the task doesn't already reflect that, update it
+            if completed and tasks[canvas_id_dict_key]['status'] != "completed":
                 body['status'] = "completed"
             # if the due dates are misaligned, update the task due date
             elif tasks[canvas_id_dict_key].get('due') != to_tasks_date(assignment['due_at']):
@@ -129,5 +131,5 @@ def sync_assignments(service, assignments, tasklist_id):
                 task["due"] = to_tasks_date(assignment['due_at'])
 
 
-            service.tasks().insert(tasklist=tasklist_id, body=task).execute()
+            service.tasks().insert(tasklist=tasklist_id, body=task).execute()#
         
