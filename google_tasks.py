@@ -100,10 +100,11 @@ def sync_assignments(service, assignments, tasklist_id):
 
         completed = assignment['has_submitted']
 
+        canvas_id_dict_key = f"{assignment['course-id']}-{assignment['assignment_id']}"
+
         # if the assignment id is a key in tasks
-        if assignment.get('assignment_id', '') in tasks:
+        if canvas_id_dict_key in tasks:
             # patches
-            canvas_id_dict_key = f"{assignment['course-id']}-{assignment['assignment_id']}"
             body = {"id": tasks[canvas_id_dict_key]['id']}
 
             if completed:
