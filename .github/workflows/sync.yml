@@ -2,7 +2,7 @@ name: Sync Canvas to Google Tasks
 
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '*/5 * * * *'
   workflow_dispatch: # allows manual trigger from GitHub UI
 
 jobs:
