@@ -2,3 +2,8 @@
 credentials.json
 token.json
 __pycache__/
+.venv/
+.pytest_cache/
+*.pyc
+sync-report*.json
+.sync-backup-*/

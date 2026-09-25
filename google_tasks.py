@@ -1,135 +1,109 @@
-import os.path
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
+"""Google Tasks adapter. Authentication is non-interactive except --authorize."""
+import json
+import os
+from pathlib import Path
 
+from sync import managed_identity
 
 SCOPES = ["https://www.googleapis.com/auth/tasks"]
 
-def authenticate():
-    creds = None
 
-    # The file token.json stores the user's access and refresh tokens, and is
-    # created automatically when the authorization flow completes for the first time.
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+def authenticate(token_path="token.json", authorize=False, credentials_path="credentials.json"):
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+    from googleapiclient.discovery import build
+    import google_auth_httplib2
+    import httplib2
 
-    # If there are no (valid) credentials available, let the user log in.
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+    if authorize:
+        from google_auth_oauthlib.flow import InstalledAppFlow
+        flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
+        credentials = flow.run_local_server(port=0, access_type="offline", prompt="consent")
+        # This is only executed on an explicit local authorization command.
+        descriptor = os.open(token_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.chmod(token_path, 0o600)
+        with os.fdopen(descriptor, "w") as handle:
+            handle.write(credentials.to_json())
+    else:
+        raw = os.environ.get("GOOGLE_TOKEN")
+        if raw:
+            info = json.loads(raw)
+        elif Path(token_path).is_file():
+            info = json.loads(Path(token_path).read_text())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                "credentials.json", SCOPES
-            )
-            creds = flow.run_local_server(port=0)
-
-        # Save the credentials for the next run
-        with open("token.json", "w") as token:
-            token.write(creds.to_json())
-
-    return build("tasks", "v1", credentials=creds)
-
-
-"""
-returns TaskList:
-{
-  "kind": "tasks#taskList",
-  "id": "QzR5QXNqcFJYTVRkM05hXw",
-  "etag": "\"9fhkEeFhWQM\"",
-  "title": "Groceries",
-  "updated": "2026-03-26T11:30:41.256Z",
-  "selfLink": "https://www.googleapis.com/tasks/v1/users/@me/lists/QzR5QXNqcFJYTVRkM05hXw"
-}
-"""
-def get_tasklist_or_create(service, tasklist_name):
-    results = service.tasklists().list().execute()
-    items = results.get("items", [])
-
-    for item in items:
-        if (tasklist_name == item['title']):
-            return item
-
-    # if no tasklist was foundwith the given name, let's make one
-    return service.tasklists().insert(body={"title":tasklist_name}).execute()
-
-def to_tasks_date(dt):
-    """Convert a datetime to Google Tasks date format (date only, no time)."""
-    return dt.strftime("%Y-%m-%dT00:00:00.000Z") if dt else None
-    #return dt.isoformat() if dt else None # time gets ignored because of course it does google :DDDDDD
-
-def sync_assignments(service, assignments, tasklist_id):
-
-    tasks = {}
-
-    # Build tasks dictionary (from tasks that already exists in google tasks)
-    results = service.tasks().list(tasklist=tasklist_id, maxResults=100, showCompleted=True, showHidden=True).execute()
-    task_items = results.get("items", [])
-    for task in task_items:
-        # snipe the canvas id from the description of our task (all automatically
-        # created tasks should have this)
-        description = task.get('notes', '')
-        parts = description.rpartition('\ncanvas-id:')
-
-        # canvas id was found
-        if parts[1]:
-            canvas_id = parts[-1]
-            tasks[canvas_id] = task
-
-        # canvas id not found... skip the task so we dont mess with it
-        else:
-            continue
-  
-    # Loop through assignments
-    # if assignment id in tasks:
-    #   If Uncompleted
-    #       maybe update due date?
-    #   If Completed:
-    #       mark as completed
-    #
-    # if assignemtn id not in tasks
-    #   if uncompleted:
-    #       create task
-    #
-    # reversed(assignments) because tasks lists are a stack and we want
-    # the earliest due dates to appear first
+            raise ValueError("Missing GOOGLE_TOKEN or token.json; run python main.py --authorize locally first")
+        credentials = Credentials.from_authorized_user_info(info, SCOPES)
+        if not credentials.valid:
+            if not credentials.refresh_token:
+                raise ValueError("Google refresh token is missing; authorize again locally")
+            credentials.refresh(Request())
+        # Access-token refresh does not need to rewrite the GitHub secret every run.
+    transport = google_auth_httplib2.AuthorizedHttp(credentials, http=httplib2.Http(timeout=45))
+    return build("tasks", "v1", http=transport, cache_discovery=False)
 
 
-    for assignment in reversed(assignments):
+class GoogleTasks:
+    def __init__(self, service):
+        self.service = service
 
-        # skip quizzes for now
-        if assignment.get('type','') == 'quiz': continue
+    @staticmethod
+    def _pages(make_request):
+        result, seen, token = [], set(), None
+        while True:
+            page = make_request(token).execute(num_retries=3)
+            result.extend(page.get("items") or [])
+            token = page.get("nextPageToken")
+            if not token:
+                return result
+            if token in seen:
+                raise ValueError("Google repeated a pagination token")
+            seen.add(token)
 
-        completed = assignment['has_submitted']
+    def find_list(self, list_name, list_id=None):
+        if list_id:
+            return self.service.tasklists().get(tasklist=list_id).execute(num_retries=3)
+        lists = self._pages(lambda token: self.service.tasklists().list(maxResults=1000, pageToken=token))
+        matches = [tasklist for tasklist in lists if tasklist["title"] == list_name]
+        if len(matches) != 1:
+            raise ValueError(f"Expected exactly one Google list named {list_name!r}; found {len(matches)}. Set GOOGLE_TASKLIST_ID explicitly.")
+        return matches[0]
 
-        canvas_id_dict_key = f"{assignment['course_id']}-{assignment['assignment_id']}"
+    def tasks(self, list_id):
+        return self._pages(lambda token: self.service.tasks().list(
+            tasklist=list_id, maxResults=100, pageToken=token,
+            showCompleted=True, showHidden=True, showDeleted=False,
+        ))
 
-        # if the assignment id is a key in tasks
-        if canvas_id_dict_key in tasks:
-            # patches
-            body = {"id": tasks[canvas_id_dict_key]['id']}
-            # if canvas assignment is completed and the task doesn't already reflect that, update it
-            if completed and tasks[canvas_id_dict_key]['status'] != "completed":
-                body['status'] = "completed"
-            # if the due dates are misaligned, update the task due date
-            elif tasks[canvas_id_dict_key].get('due') != to_tasks_date(assignment['due_at']):
-                body['due'] = to_tasks_date(assignment['due_at'])
-            else: continue # no update needs to happen so go to the next assignment
-
-            service.tasks().patch(tasklist=tasklist_id, task=tasks[canvas_id_dict_key]['id'], body=body).execute()
-
-
-        # assignment not already a task, create one if it's not already completed
-        elif not completed:
-            task = {
-                "title": f"({assignment['course_code']}) {assignment['name']}",
-                "notes": f"{assignment['url']}\ncanvas-id:{canvas_id_dict_key}"
-            }
-
-            if assignment['due_at']:
-                task["due"] = to_tasks_date(assignment['due_at'])
-
-
-            service.tasks().insert(tasklist=tasklist_id, body=task).execute()#
-        
+    def apply(self, list_id, plan, original_tasks):
+        # Append after the last open root task, preserving the user's priority order.
+        roots = [t for t in original_tasks if not t.get("parent") and not t.get("hidden")
+                 and not t.get("deleted") and t.get("status") != "completed"]
+        previous = max(roots, key=lambda t: t.get("position", ""))["id"] if roots else None
+        completed_ids = {c.task_id for c in plan.changes if c.body.get("status") == "completed"}
+        # Insert before completing the chosen previous sibling, which may leave the visible list.
+        changes = sorted(plan.changes, key=lambda c: c.action != "create")
+        counts = {"created": 0, "updated": 0, "completed": 0}
+        for change in changes:
+            if change.action == "update":
+                self.service.tasks().patch(tasklist=list_id, task=change.task_id, body=change.body).execute(num_retries=3)
+                counts["updated"] += 1
+                counts["completed"] += int(change.task_id in completed_ids)
+                continue
+            args = {"tasklist": list_id, "body": change.body}
+            if previous:
+                args["previous"] = previous
+            try:
+                # POST is not idempotent. Never blindly retry an ambiguous insert.
+                inserted = self.service.tasks().insert(**args).execute(num_retries=0)
+            except Exception as error:
+                try:
+                    matches = [task for task in self.tasks(list_id)
+                               if managed_identity(task)[0] == change.key]
+                except Exception:
+                    raise RuntimeError("Google insert outcome is unknown. Run a fresh dry-run before retrying.") from error
+                if len(matches) != 1:
+                    raise RuntimeError("Google insert failed or its outcome is unknown. Run a fresh dry-run before retrying.") from error
+                inserted = matches[0]
+            previous = inserted["id"]
+            counts["created"] += 1
+        return counts

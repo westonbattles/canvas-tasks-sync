@@ -1,5 +1,7 @@
-requests
-python-dotenv
-google-api-python-client
-google-auth-httplib2
-google-auth-oauthlib
+requests>=2.32.4,<3
+python-dotenv>=1.1,<2
+google-api-python-client>=2.170,<3
+google-auth>=2.40,<3
+google-auth-httplib2>=0.2,<1
+google-auth-oauthlib>=1.2,<2
+httplib2>=0.22,<1
