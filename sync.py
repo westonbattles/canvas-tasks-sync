@@ -33,23 +33,26 @@ def render_notes(item, old_notes, tz):
         if user_notes.count(START) != 1 or user_notes.count(END) != 1 or user_notes.index(START) > user_notes.index(END):
             raise SyncConflict(f"Malformed managed notes for {item.key}; repair the marker block first")
         user_notes = re.sub(re.escape(START) + r".*?" + re.escape(END), "", user_notes, flags=re.DOTALL)
-    else:
-        # Migrate the old two-line format without deleting notes the user added.
-        lines = []
-        for line in user_notes.splitlines():
-            if line.startswith(("canvas-id:", "canvas-sync-id:")):
-                continue
-            if line.startswith(("https://", "http://")) and identity_url(line.strip(), f"https://{item.host}") in item.urls:
-                continue
-            lines.append(line)
-        user_notes = "\n".join(lines)
-    block = [START, item.url]
+    # The source link lives above the managed block. Remove its previous copy
+    # before putting it first, including when migrating either old notes format.
+    # Keep unrelated links and text the user added.
+    lines = []
+    for line in user_notes.splitlines():
+        if line.startswith(("canvas-id:", "canvas-sync-id:")):
+            continue
+        if line.startswith(("https://", "http://")) and identity_url(line.strip(), f"https://{item.host}") in item.urls:
+            continue
+        lines.append(line)
+    user_notes = "\n".join(lines).strip()
+    block = [START]
     if item.due_at:
         block.append("Canvas deadline: " + item.due_at.astimezone(tz).strftime("%Y-%m-%d %H:%M %Z"))
     block.extend(["canvas-sync-id:" + item.key, END])
-    notes = "\n".join(block)
-    if user_notes.strip():
-        notes = user_notes.strip() + "\n\n" + notes
+    sections = [item.url]
+    if user_notes:
+        sections.append(user_notes)
+    sections.append("\n".join(block))
+    notes = "\n\n".join(sections)
     if len(notes) > 8192:
         raise SyncConflict(f"Notes exceed Google's limit for {item.key}")
     return notes

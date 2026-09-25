@@ -31,6 +31,49 @@ class PlanTests(unittest.TestCase):
         source = item()
         self.assertEqual(build_plan([source], [existing(source)], TZ).changes, [])
 
+    def test_link_first_user_notes_next_managed_details_last(self):
+        source = item()
+        personal = "My own note\nhttps://example.com/reference"
+        notes = render_notes(source, personal, TZ)
+        self.assertTrue(notes.startswith(source.url + "\n\n" + personal + "\n\n[canvas-sync]\n"))
+        self.assertTrue(notes.endswith("canvas-sync-id:" + source.key + "\n[/canvas-sync]"))
+        self.assertNotIn(source.url, notes.split("[canvas-sync]", 1)[1])
+        self.assertEqual(render_notes(source, notes, TZ), notes)
+
+    def test_previous_block_layout_migrates_in_place_without_losing_notes(self):
+        source = item()
+        old_notes = (
+            "My own note\n\n[canvas-sync]\n" + source.url
+            + "\nCanvas deadline: 2026-09-30 23:59 PDT"
+            + "\ncanvas-sync-id:" + source.key + "\n[/canvas-sync]\nAnother note"
+        )
+        task = existing(source, notes=old_notes)
+        change = build_plan([source], [task], TZ).changes[0]
+        self.assertEqual(change.action, "update")
+        self.assertEqual(change.task_id, task["id"])
+        self.assertEqual(set(change.body), {"notes"})
+        notes = change.body["notes"]
+        self.assertEqual(notes.splitlines()[0], source.url)
+        self.assertEqual(notes.count(source.url), 1)
+        self.assertIn("My own note", notes)
+        self.assertIn("Another note", notes)
+        self.assertLess(notes.index("Another note"), notes.index("[canvas-sync]"))
+        self.assertEqual(build_plan([source], [{**task, **change.body}], TZ).changes, [])
+
+    def test_deadline_updates_and_removal_keep_link_and_personal_notes(self):
+        source = item()
+        original = render_notes(source, "Keep this note", TZ)
+        source.due_at = datetime.fromisoformat("2026-10-02T06:59:00+00:00")
+        changed = render_notes(source, original, TZ)
+        self.assertEqual(changed.count(source.url), 1)
+        self.assertIn("Canvas deadline: 2026-10-01 23:59 PDT", changed)
+        self.assertNotIn("Canvas deadline: 2026-09-30", changed)
+        source.due_at = None
+        changed = render_notes(source, changed, TZ)
+        self.assertTrue(changed.startswith(source.url + "\n\nKeep this note\n\n"))
+        self.assertNotIn("Canvas deadline:", changed)
+        self.assertEqual(render_notes(source, changed, TZ), changed)
+
     def test_completion_title_and_due_update_together(self):
         source = item(completed=True)
         task = existing(source, title="Old title", due="2020-01-01T00:00:00Z")
@@ -71,6 +114,7 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(change.action, "update")
         self.assertEqual(change.task_id, "google-id")
         self.assertIn("My own note", change.body["notes"])
+        self.assertEqual(change.body["notes"].splitlines()[0], source.url)
         self.assertNotIn("\ncanvas-id:", change.body["notes"])
         updated = {**task, **change.body}
         self.assertEqual(build_plan([source], [updated], TZ).changes, [])
